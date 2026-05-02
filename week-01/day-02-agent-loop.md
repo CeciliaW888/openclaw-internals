@@ -1,92 +1,106 @@
-# Day 2 — The agent loop: runs, turns, events, streaming
+# Day 2 — How your Agent thinks: runs, turns, and events
 
-Day 1 gave you the static map: gateway, channels, agent, sessions, tools. Today is the dynamic view. Between the moment a user hits send and the moment a reply appears in their chat, OpenClaw spins up a *run*, drives one or more *turns*, and emits a stream of *events* that get translated into channel messages. If you want to build your own agent on top of this stack, you have to be fluent in those three nouns.
+Yesterday you learned the five pieces of OpenClaw. Today you look inside one of them — the Agent — and follow what actually happens between the moment you send a message and the moment a reply comes back.
 
-## Mental model
+Three words explain it: **run**, **turn**, and **event**. Once those click, you'll understand why your Agent sometimes replies in chunks, why it occasionally pauses before answering, and why it can handle complex multi-step tasks.
 
-Three words, three scopes:
+## The big picture
 
-- **Run** = the lifecycle. One inbound prompt produces one run. It's serialized per session key, has a `runId`, starts with `agent_start` and ends with `agent_end` (or a lifecycle error). `agent.wait` resolves on lifecycle end.
-- **Turn** = one round-trip with the model. A run typically contains several turns: one to think + call a tool, one to read the tool result and reply, etc. Bracketed by `turn_start` / `turn_end`.
-- **Event** = a single signal on the stream. `message_start`, `message_update`, `tool_execution_end`, `compaction_start`, and so on. Events are what `subscribeEmbeddedPiSession` listens to.
+Imagine you're texting a very capable assistant. You send one message — say, "Book me a restaurant for Friday." That single message kicks off a whole chain of activity on the other end before a reply comes back to you.
 
-Here is one run with a tool call, in time order:
+That chain is what we're mapping today.
+
+## The three words
+
+### Run — one job, start to finish
+
+A **run** is everything that happens in response to one message you send. It starts the moment your message arrives and ends the moment the final reply is delivered. One message in = one run.
+
+A run might take one second or thirty seconds depending on what's involved. But it's always one complete job.
+
+**Analogy:** A run is like placing a food order at a restaurant. From the moment you tell the waiter what you want, to the moment the plate lands on your table — that's one run.
+
+### Turn — one round of thinking
+
+Inside a run, your Agent might need to think more than once. Each round of thinking is a **turn**.
+
+If your message is simple ("What's the weather like?"), the Agent thinks once, writes a reply, done — that's one turn.
+
+If your message requires the Agent to look something up first ("Book me a restaurant for Friday"), it might need two turns:
+- **Turn 1:** "I need to find available restaurants — let me check." (uses a tool to search)
+- **Turn 2:** "Here's what I found, and here's my recommendation." (reads the result, writes the reply)
+
+Every tool the Agent uses adds at least one extra turn.
+
+**Analogy:** Turns are the waiter's trips to the kitchen. A simple order might need one trip. A complicated order might need the waiter to check with the chef, come back, confirm an allergy, go back again — multiple trips, one order.
+
+### Event — a signal along the way
+
+An **event** is a small signal that gets sent each time something meaningful happens during a run. There are events for "started thinking," "starting to write," "used a tool," "finished," and more.
+
+You don't usually see events directly — but they're what drives everything you *do* see: the typing indicator, partial replies appearing, the tool progress message ("Searching the web…"), the final answer.
+
+**Analogy:** Events are like the kitchen display system in a restaurant — "order received," "chef started," "plate ready," "runner picking up." You don't see the display, but it's what makes the waiter show up at the right time.
+
+## What this looks like in practice
+
+Here's a simple example — you ask: *"Summarise today's news and send it to me."*
 
 ```
-prompt arrives
-  │
-  ▼
-[run]  agent_start ──────────────────────────────────────────────► agent_end
+You send the message
         │
-        ├─ [turn 1]  turn_start ─► message_start ─► message_update* ─► message_end
-        │             │                                                  │
-        │             └─► tool_execution_start ─► tool_execution_update* ┘
-        │                  └─► tool_execution_end ─► turn_end
+        ▼
+  Run begins
         │
-        └─ [turn 2]  turn_start ─► message_start ─► message_update* ─► message_end ─► turn_end
-                                            │
-                                            └─► onBlockReply / onPartialReply ─► channel send
+        ├── Turn 1: Agent reads your message, decides to search the web
+        │       └── Tool used: web search → results come back
+        │
+        └── Turn 2: Agent reads the results, writes your summary
+                └── Reply delivered to you
+  Run ends
 ```
 
-Reasoning, compaction, and retries all slot into this same skeleton. Internalize the diagram and the rest of today is just labeling pieces of it.
+If the Agent didn't need to search anything, there'd only be one turn. If it needed to search *and* check your calendar, there might be three turns.
 
-## How it works internally
+## What you see as the user
 
-Open `pi.md`'s "Core integration flow" section side-by-side with `pi-embedded-subscribe.ts` and you'll see the loop is a thin event router on top of pi-agent-core's `AgentSession`.
+Depending on how your Agent is set up, you might see:
 
-**Lifecycle events.** `agent_start` marks the run beginning; `agent_end` marks completion. `subscribeEmbeddedPiSession` translates these into the OpenClaw `lifecycle` stream with `phase: "start" | "end" | "error"`. `agent.wait` blocks on lifecycle end/error for a given `runId`. Anything that needs to fire exactly once per run (final delivery, transcript flush, hook `agent_end`) hangs off lifecycle end.
+- **A typing indicator** while the Agent is thinking
+- **Partial replies arriving in chunks** as the Agent writes (rather than waiting for the whole thing)
+- **Tool progress messages** like "Searching the web…" or "Checking your calendar…" between turns
+- **The final reply** once everything is done
 
-**Turn events.** `turn_start` and `turn_end` bracket each model round-trip. A run with no tool calls is one turn. A run with a tool call is at least two: one to emit the tool call, one to consume the tool result and reply. This matters when you reason about cost and context — the system prompt is sent every turn, not every run.
+These are all just different events being translated into things your messaging app can show you.
 
-**Message events.** `message_start` opens an assistant message. `message_update` carries text deltas (and reasoning deltas, if streaming reasoning). `message_end` closes it. These deltas are what `EmbeddedBlockChunker` consumes. The chunker buffers text until it has enough to emit a coarse "block" — at minimum `minChars`, preferably split on a paragraph/newline/sentence boundary, never inside a fenced code block. When `blockStreamingBreak` is `text_end`, blocks are flushed as the chunker fills; when it's `message_end`, the chunker waits and may still emit multiple chunks if the buffered text exceeds `maxChars`.
+## The knobs that affect this
 
-**Tool events.** `tool_execution_start`, `tool_execution_update`, `tool_execution_end` bracket each tool call. The subscriber calls `onToolResult` on `tool_execution_end` (after sanitizing for size and image payloads) and feeds tool-progress text into preview streaming when the channel supports it.
+You can influence how runs and turns feel from inside a chat, without touching any config:
 
-**Compaction events.** `compaction_start` and `compaction_end` flank automatic context compaction; the run can retry afterward, and OpenClaw resets in-memory buffers and tool summaries on retry to avoid duplicate output.
+| What you type | What it does |
+|---|---|
+| `/verbose on` | Shows more detail about what the Agent is doing between turns (tool calls, progress) |
+| `/verbose off` | Hides the extra detail, just shows the final reply |
+| `/think` | Asks the Agent to show its reasoning — useful when you want to understand *why* it answered a certain way |
+| `/reasoning stream` | Streams the Agent's reasoning to you as it thinks, before the reply |
 
-**Channel callbacks.** `subscribeEmbeddedPiSession` exposes a callback surface — `onBlockReply`, `onPartialReply`, `onToolResult`, `onReasoningStream`, `onAgentEvent`. Each chunk that the block chunker emits is run through `consumeReplyDirectives`, which parses and strips reply directives like `[[media:url]]`, `[[voice]]`, and `[[reply:id]]`, returning `{ text, mediaUrls, audioAsVoice, replyToId }`. The cleaned text is then run through `stripBlockTags`, which removes `<think>` / `<thinking>` content and, when `enforceFinalTag` is on, keeps only what's inside `<final>...</final>`. Only after that does `onBlockReply` fire with a payload the channel can actually deliver.
+These are session-level switches — they affect the current conversation and reset next time.
 
-**Final assembly.** When the run ends, the final payload is built from assistant text (plus reasoning, when visible), inline tool summaries (when verbose allows), and assistant error text on errors. The exact silent token `NO_REPLY` / `no_reply` is filtered out, messaging-tool duplicates are removed, and a `chat: final` is emitted on lifecycle end/error.
+## Group chats: a practical tip
 
-## Knobs you control
+If your Agent is in a group chat and someone asks it a complex multi-part question involving several people, you might not want one big wall of text replying to everyone at once.
 
-The loop is fixed; how it surfaces is configurable. The dials that matter:
+OpenClaw lets the Agent direct specific parts of its reply at specific people — each chunk is a separate quote-reply targeted at whoever it's responding to. Combined with the chunked streaming above, you get natural, conversational replies in groups rather than a broadcast monologue.
 
-- **`thinking` level** — `low` / `medium` / `high` per agent or per run; falls back if a model rejects it (`pickFallbackThinkingLevel`). Controls reasoning effort, not visibility.
-- **`/reasoning on|off|stream`** — controls reasoning *visibility*. `stream` writes reasoning deltas as block replies (or into the preview bubble on Telegram).
-- **`/verbose` and `/think`** — chat commands that flip verbose level and thinking on a session without editing config.
-- **Block streaming** — `agents.defaults.blockStreamingDefault` (`on`/`off`), `blockStreamingBreak` (`text_end` or `message_end`), `blockStreamingChunk` (`minChars`/`maxChars`/`breakPreference`), `blockStreamingCoalesce` (`idleMs` to merge tiny blocks). Non-Telegram channels also need `*.blockStreaming: true`.
-- **`humanDelay`** — `off` / `natural` / `custom` randomized pause between block replies.
-- **Preview streaming** — `channels.<ch>.streaming` with modes `off` / `partial` / `block` / `progress`, plus `streaming.preview.toolProgress` to show or hide "searching the web" status lines.
-- **Typing** — `agents.defaults.typingMode` (`never` / `instant` / `thinking` / `message`) and `typingIntervalSeconds`.
-- **Reply directives in the system prompt** — telling the agent it can emit `[[media:url]]`, `[[voice]]`, `[[reply:id]]`, or `NO_REPLY` is what makes those directives actually fire.
-- **Message tool action** — channel-specific message tools let the agent send out-of-band; `EmbeddedMessagingSentTracker` suppresses duplicate assistant confirmations for those sends.
+You don't need to configure this manually — it's driven by how you instruct the Agent in its personality files (more on that in later days).
 
-## Power-user pattern
+## Reflect
 
-In a noisy group chat, you usually don't want the bot to shout one big reply that has to mention three different people. Combine two source-grounded mechanisms:
+Before moving on, check your understanding with these questions — no technical knowledge needed:
 
-1. **Per-message threading with `[[reply:id]]`.** Have the agent emit `[[reply:<sourceMessageId>]]` at the top of each block targeted at a specific user. `consumeReplyDirectives` extracts it and the channel delivers as a quote-reply to that exact message. Combined with `blockStreamingBreak: "text_end"`, you get one quoted bubble per addressee instead of one long broadcast.
-2. **Silent replies for internal-only turns.** When the agent only needs to call a tool (e.g. log a memory, label a thread) without saying anything, have it return the literal token `NO_REPLY`. Groups/channels allow silence by default; OpenClaw filters the token from the outgoing payload but still delivers any pending tool media. In direct chats, `silentReplyRewrite` will convert it to a short visible fallback — leave that on unless you explicitly want a silent DM.
-
-The combo lets one run produce N targeted quote-replies plus zero broadcast noise, all driven by what the model writes — no channel-specific glue code.
-
-## Try this
-
-Pick one inbound message you ran today and reconstruct its event timeline.
-
-1. Find the session JSONL under `~/.openclaw/agents/<agentId>/sessions/` (or `$OPENCLAW_STATE_DIR/...`).
-2. Open it and identify: where does the new run start? How many `turn_start` / `turn_end` pairs are inside it? How many `tool_execution_*` triples?
-3. Re-run a prompt with verbose logging on (`/verbose on` in the chat, or the `--verbose` flag on the CLI). In the gateway log, find the `lifecycle`, `assistant`, and `tool` stream lines. Mark which `message_update` deltas got coalesced into a single `onBlockReply` and which got split.
-4. Bonus: turn on `/reasoning stream` and watch reasoning deltas appear *before* `message_start`. That's `thinking` typing-mode territory.
-
-Ten minutes, one terminal. You will never read the rest of this course's code the same way.
-
-## Reflection
-
-1. Why does the system prompt get sent on every `turn_start`, not just once per run? What does that imply for cost when an agent makes five tool calls?
-2. If `blockStreamingBreak` is `message_end`, can `onBlockReply` still fire more than once for a single assistant message? Under what condition?
-3. You see a duplicate media attachment in a Telegram reply. Which of these is the more likely culprit — `EmbeddedBlockChunker`, `consumeReplyDirectives`, or the final-payload media-dedupe in the streaming pipeline — and why?
+1. You send your Agent one message and get a reply back. How many runs happened?
+2. Your Agent replies "Searching the web…" and then gives you an answer. How many turns were there at minimum?
+3. You're in a group chat and the Agent's reply feels like a wall of text addressed to no one in particular. Based on today's content, which concept is most relevant to fixing that?
 
 ---
 [← Day 1](day-01-five-piece-map.md) · [Course home](../README.md) · [Glossary](../glossary.md) · [Day 3 →](day-03-pi-engine.md)
