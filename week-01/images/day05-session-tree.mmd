@@ -1,0 +1,13 @@
+flowchart TD
+    A["👤 Your message"] --> B["🤖 Agent reply"]
+    B --> C["🔧 Tool used"]
+    C --> D["🔧 Tool result"]
+    D --> E["🤖 Agent reply"]
+    E --> F["👤 Your message"]
+    F --> G1["🤖 Original reply\n(old branch)"]
+    F --> G2["🧹 Compaction summary\n(new branch — active)"]
+    G2 --> H["🤖 Agent reply\n(post-compaction)"]
+
+    style G1 fill:#f5f5f5,stroke:#ccc,color:#999
+    style G2 fill:#e8f5e9,stroke:#66bb6a
+    style H fill:#e8f5e9,stroke:#66bb6a
