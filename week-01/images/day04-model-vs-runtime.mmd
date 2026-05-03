@@ -1,0 +1,17 @@
+flowchart LR
+    subgraph MODEL["🧠 Model — the chef"]
+        M1["Claude"]
+        M2["GPT-5"]
+        M3["Gemini"]
+    end
+
+    subgraph RUNTIME["🍳 Runtime — the kitchen"]
+        R1["PI harness\nOpenClaw runs everything"]
+        R2["Codex harness\nCodex runs the loop"]
+    end
+
+    M1 & M2 & M3 -.- R1
+    M1 & M2 & M3 -.- R2
+
+    note["Any model can run\nin either kitchen"]
+    style note fill:#fffbe6,stroke:#f0c040
