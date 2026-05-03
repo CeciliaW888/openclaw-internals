@@ -8,18 +8,27 @@ When OpenClaw asks an AI to think, it needs to decide *how* to run that thinking
 
 Before anything else, let's separate two settings that often get mixed up:
 
-**The model** — *which AI you're using.* Claude, GPT-5, Gemini, and so on. This is the brain. Changing the model changes who does the thinking.
+**The model ref** — *which AI you're using and how to authenticate.* Written as `provider/model`, for example `anthropic/claude-opus-4-6` or `openai/gpt-5.5`. This tells OpenClaw which brain to use and which login credentials to use to reach it.
 
-**The runtime** — *how OpenClaw connects to that brain.* This is the method or route. Changing the runtime changes the plumbing, not the brain.
+**The runtime** (`agentRuntime.id`) — *how OpenClaw runs the thinking loop.* This is the method or plumbing. Changing the runtime changes how the turn is executed, not which AI does the thinking.
 
 A good analogy: imagine ordering a meal.
 
-- The **model** is which chef you've chosen (Jamie Oliver, Gordon Ramsay…)
-- The **runtime** is which kitchen they're cooking in (your kitchen, their restaurant…)
+- The **model ref** is which chef you've chosen and whether you're paying by card or voucher
+- The **runtime** (`agentRuntime.id`) is which kitchen they're cooking in (your kitchen, their restaurant…)
 
-You can have Jamie cook in your kitchen. You can have Jamie cook in his own restaurant. Those are different runtimes, same chef. Mixing them up is the number one source of confusion on this day — so keep that picture in mind.
+Mixing them up is the number one source of confusion on this day — so keep that picture in mind.
 
 ![Model vs runtime](images/day04-model-vs-runtime.png)
+
+### `openai/gpt-5.5` vs `openai-codex/gpt-5.5`
+
+Same model, different login method. The prefix before the `/` is the **auth route** — how OpenClaw authenticates to reach the model.
+
+- **`openai/gpt-5.5`** — uses an OpenAI **API key** (from platform.openai.com, pay per use)
+- **`openai-codex/gpt-5.5`** — uses **Codex/ChatGPT OAuth** (log in with your ChatGPT account, subscription-based)
+
+GPT-5.5 is the brain in both cases. The prefix only affects billing and login. This is also why the docs warn against combining `openai-codex/gpt-5.5` with `agentRuntime.id: "codex"` — `openai-codex` in a model ref means "use Codex OAuth login," while `codex` as a runtime means "use the Codex app's thinking loop." They sound related but are two completely separate settings.
 
 ## The two harnesses
 
@@ -52,16 +61,16 @@ This is intentional — it would be confusing if the AI's "engine" changed halfw
 
 ## What you actually need to configure
 
-Most people don't need to touch any of this. If you're curious or troubleshooting:
+The config key is `agents.defaults.agentRuntime.id`. Most people don't need to touch it. If you're curious or troubleshooting:
 
-| Setting | What it does |
+| `agentRuntime.id` value | What it does |
 |---|---|
-| Default (nothing set) | Uses PI — OpenClaw handles everything |
-| `auto` | OpenClaw picks the best harness automatically |
-| Force PI | All conversations use the PI harness |
-| Force Codex | All conversations use the Codex harness |
+| *(not set)* | Uses PI — OpenClaw handles everything |
+| `"auto"` | OpenClaw picks the best harness automatically |
+| `"pi"` | Forces the PI harness for all conversations |
+| `"codex"` | Forces the Codex harness for all conversations |
 
-The chat commands `/new` and `/reset` both start fresh — useful after you've changed harness settings and want the new setting to take effect.
+The chat commands `/new` and `/reset` both start fresh — useful after you've changed `agentRuntime.id` and want the new setting to take effect on an existing conversation.
 
 ## A practical tip: two agents, two purposes
 
