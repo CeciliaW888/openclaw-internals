@@ -1,0 +1,10 @@
+flowchart TD
+    A["💬 You send a message"] --> B
+
+    subgraph RUN["🔄 RUN — the whole job"]
+        B["Turn 1: Agent reads your message\nand decides to search the web"]
+        B --> C["🔍 Tool used: web search"]
+        C --> D["Turn 2: Agent reads the results\nand writes your summary"]
+    end
+
+    D --> E["✅ Reply delivered to you"]

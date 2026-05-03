@@ -1,0 +1,10 @@
+flowchart LR
+    P["👤 Person"] -->|sends message| C
+    C["📱 Channel\nWhatsApp"] -->|passes to| G
+    G["🏛️ Gateway"] -->|routes to| A
+    A["🤖 Agent"] -->|records in| S["💬 Session"]
+    A -->|writes reply via| G
+    G -->|delivers| C
+    C -->|reply arrives| P
+
+    N["📷 Node\nyour phone"] -.->|optional: location, photo…| A
