@@ -10,15 +10,7 @@ The station has one central control room (the **Gateway**) that keeps everything
 
 Here's how all five pieces fit together:
 
-```mermaid
-flowchart TD
-    G["🏛️ Gateway\nthe control room"]
-
-    G --> C["📱 Channels\nWhatsApp · Telegram · Slack · Discord…"]
-    G --> A["🤖 Agents\nyour AI personality"]
-    G --> N["📷 Nodes\nyour phone · laptop · tablet"]
-    A --> S["💬 Sessions\none thread per conversation"]
-```
+![The 5 pieces of OpenClaw](images/day01-structure.png)
 
 Everything flows through the Gateway. Nothing talks to anything else directly.
 
@@ -68,18 +60,7 @@ Nodes are optional. If you just want a chatbot on WhatsApp, you don't need any N
 
 Here's what happens when someone sends your Agent a WhatsApp message:
 
-```mermaid
-flowchart LR
-    P["👤 Person"] -->|sends message| C
-    C["📱 Channel\nWhatsApp"] -->|passes to| G
-    G["🏛️ Gateway"] -->|routes to| A
-    A["🤖 Agent"] -->|records in| S["💬 Session"]
-    A -->|writes reply via| G
-    G -->|delivers| C
-    C -->|reply arrives| P
-
-    N["📷 Node\nyour phone"] -.->|optional: location, photo…| A
-```
+![How a message flows through OpenClaw](images/day01-message-flow.png)
 
 1. **WhatsApp** receives the message and passes it to your **Gateway** (via the Channel connection).
 2. The **Gateway** looks at who sent it and routes it to the right **Agent**.

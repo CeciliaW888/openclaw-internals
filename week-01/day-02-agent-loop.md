@@ -10,22 +10,7 @@ Imagine you're texting a very capable assistant. You send one message — say, "
 
 That chain is what we're mapping today. Here's a concept map of how the three ideas connect before we go deeper:
 
-```mermaid
-mindmap
-  root((One message you send))
-    RUN
-      The whole job
-      Starts and ends once
-      Contains all turns
-    TURN
-      One round of thinking
-      Simple message = 1 turn
-      Tool needed = extra turns
-    EVENT
-      A signal each time something happens
-      Invisible to you...
-        ...but drives what you see
-```
+![Concept map: run, turn, event](images/day02-concept-map.png)
 
 ## The three words
 
@@ -63,18 +48,7 @@ You don't usually see events directly — but they're what drives everything you
 
 Here's a simple example — you ask: *"Summarise today's news and send it to me."*
 
-```mermaid
-flowchart TD
-    A["💬 You send a message"] --> B
-
-    subgraph RUN["🔄 RUN — the whole job"]
-        B["Turn 1: Agent reads your message\nand decides to search the web"]
-        B --> C["🔍 Tool used: web search"]
-        C --> D["Turn 2: Agent reads the results\nand writes your summary"]
-    end
-
-    D --> E["✅ Reply delivered to you"]
-```
+![How a run with a tool call works](images/day02-run-flow.png)
 
 If the Agent didn't need to search anything, Turn 1 would go straight to writing the reply — no Turn 2 needed. If it needed to search *and* check your calendar, there might be three turns.
 
@@ -89,13 +63,7 @@ Depending on how your Agent is set up, you might see:
 
 These are all just different events being translated into things your messaging app can show you.
 
-```mermaid
-flowchart LR
-    A["Event: run started"] --> B["⌨️ Typing indicator appears"]
-    C["Event: writing reply"] --> D["💬 Partial reply builds up"]
-    E["Event: using a tool"] --> F["🔍 'Searching the web…' message"]
-    G["Event: run finished"] --> H["✅ Full reply delivered"]
-```
+![What events look like to you](images/day02-events.png)
 
 ## The knobs that affect this
 
