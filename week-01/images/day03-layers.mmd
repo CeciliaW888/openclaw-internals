@@ -1,0 +1,15 @@
+flowchart TD
+    subgraph OC["🚗 OpenClaw — the car body"]
+        A["Channels\nWhatsApp · Telegram · Slack…"]
+        B["Routing & Auth"]
+        C["Sessions & Prompts"]
+    end
+
+    subgraph PI["⚙️ Pi — the engine"]
+        D["Coding Agent\nhigh-level interface"]
+        E["Agent Core\nturns · tool execution"]
+        F["Model Layer\nAnthropic · Google · OpenAI…"]
+    end
+
+    OC -->|"calls Pi directly\n(built in, not separate)"| PI
+    PI -->|"streams reply\nevents back"| OC

@@ -1,145 +1,88 @@
-# Day 3 — Pi, the engine inside
+# Day 3 — Pi: the brain inside OpenClaw
 
-## Mental model
+## The one-line version
 
-Pi is the engine. OpenClaw is the chassis.
+OpenClaw is responsible for messaging — receiving messages, routing them, sending replies. But the actual *thinking* — understanding your message, deciding what to do, using tools, generating a response — is handled by a separate piece called **Pi**. OpenClaw and Pi work together, but they have different jobs.
 
-OpenClaw does not implement an LLM agent loop, a model router, or coding tools. It imports those from Pi — an SDK by Mario Zechner (`@badlogic`) published as the `pi-mono` monorepo. When a Telegram message turns into a `read` tool call and a streamed reply, almost every interesting verb in that sentence is Pi's verb. OpenClaw's job is to decide *when* to call Pi, *with what prompt*, *under whose identity*, and *to which channel* the streamed bytes go back.
+Today is about understanding what Pi is, why it's built in rather than bolted on, and what that means for you when something goes wrong.
 
-Stack it in layers, bottom to top:
+## The engine and the car
 
-```
-+----------------------------------------------+
-| OpenClaw                                     |
-|   gateway, channels, sessions-per-key,       |
-|   auth profiles, sandbox, system prompt      |
-+----------------------------------------------+
-| pi-coding-agent  (the SDK surface)           |
-|   createAgentSession, SessionManager,        |
-|   AuthStorage, ModelRegistry, builtin tools  |
-+----------------------------------------------+
-| pi-agent-core    (the loop)                  |
-|   AgentMessage, tool execution, turns        |
-+----------------------------------------------+
-| pi-ai            (the model abstraction)     |
-|   Model, streamSimple, provider APIs         |
-+----------------------------------------------+
-```
+Think of it like a car.
 
-A fourth package, `pi-tui`, is parallel rather than under the others — it's the terminal UI Pi ships with, and OpenClaw also pulls it in for its own `pnpm tui` mode. Everything you observed yesterday in Day 2's agent loop — turn boundaries, tool execution events, compaction — is happening *inside Pi*. OpenClaw subscribes to those events and adapts them to channels.
+The **engine** (Pi) is what makes the car actually move. It handles combustion, power output, all the mechanical work. You don't interact with the engine directly — it just does its job.
 
-## How it works internally
+The **car body** (OpenClaw) is everything around the engine: the steering wheel, the dashboard, the doors, the sat-nav. It decides where to go, who's driving, and how the journey feels. It uses the engine to move — but the engine doesn't care about any of that.
 
-### The four packages
+![OpenClaw and Pi layers](images/day03-layers.png)
 
-From `docs/pi.md`:
+OpenClaw could not send a WhatsApp reply without Pi. Pi doesn't know what WhatsApp is — it just thinks and responds. They need each other.
 
-| Package           | Purpose                                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| `pi-ai`           | Core LLM abstractions: `Model`, `streamSimple`, message types, provider APIs                           |
-| `pi-agent-core`   | Agent loop, tool execution, `AgentMessage` types                                                       |
-| `pi-coding-agent` | High-level SDK: `createAgentSession`, `SessionManager`, `AuthStorage`, `ModelRegistry`, built-in tools |
-| `pi-tui`          | Terminal UI components (used in OpenClaw's local TUI mode)                                             |
+## What Pi actually does
 
-OpenClaw pins all four to the same version (currently `0.70.2`). They're versioned together because the inner types — `AgentMessage`, `ToolDefinition`, `AgentTool` — leak across the boundary, and a mismatch will cost you a typecheck.
+Pi handles everything you learned about in Day 2:
 
-### Embedded, not subprocess
+- Running each **turn** (round of thinking)
+- Calling **tools** (web search, reading files, etc.)
+- Streaming the **reply** back as it's written
+- Managing **compaction** (when the conversation gets too long)
 
-The most consequential decision OpenClaw made about Pi: it does not spawn the `pi` CLI as a child process and it does not use Pi's RPC mode. It imports Pi as a library and calls `createAgentSession()` directly. The pi.md "Overview" lists the benefits this buys, and they're all things you cannot get over a subprocess boundary:
+OpenClaw's job is to decide *when* to ask Pi to think, *what prompt to give it*, and *where to send the reply* once Pi is done.
 
-- Full control over session lifecycle and event handling
-- Custom tool injection (messaging, sandbox, channel-specific actions)
-- System prompt customization per channel/context
-- Session persistence with branching/compaction support
-- Multi-account auth profile rotation with failover
-- Provider-agnostic model switching
+## Built in, not bolted on
 
-A subprocess gives you stdout. Embedding gives you typed events, in-process tool functions that close over the channel they should reply to, and a `SessionManager` you can wrap with safety guards. Day 2's agent loop only looks tractable because of this choice.
+This is the most important thing to understand about how Pi works inside OpenClaw — and it answers a question you might not have thought to ask yet.
 
-### The actual session call
+There are two ways you could connect an engine to a car:
 
-Inside `runEmbeddedAttempt()` (under `src/agents/pi-embedded-runner/`), the call shape is:
+1. **Bolted on** — the engine sits separately and you communicate with it by passing written notes back and forth. Slow, limited, awkward. If the engine needs to know something urgent, it has to wait for the next note.
 
-```ts
-const { session } = await createAgentSession({
-  cwd: resolvedWorkspace,
-  agentDir,
-  authStorage: params.authStorage,
-  modelRegistry: params.modelRegistry,
-  model: params.model,
-  thinkingLevel: mapThinkingLevel(params.thinkLevel),
-  tools: builtInTools,
-  customTools: allCustomTools,
-  sessionManager,
-  settingsManager,
-  resourceLoader,
-});
+2. **Built in** — the engine is physically part of the car, sharing the same space. Everything communicates instantly and directly.
 
-applySystemPromptOverrideToSession(session, systemPromptOverride);
-```
+OpenClaw uses the **built-in** approach. Pi is not a separate program that OpenClaw talks to — it's woven directly into OpenClaw itself. This is why:
 
-Note `builtInTools` is empty in OpenClaw — `splitSdkTools()` returns `{ builtInTools: [], customTools: ... }`. OpenClaw replaces every tool, including `bash` (becomes `exec`/`process`) and the read/edit/write trio (sandbox-aware variants). The last line is also load-bearing: instead of letting Pi build its own system prompt from `AGENTS.md`, OpenClaw computes one in `buildAgentSystemPrompt()` and pushes it onto the session.
+- OpenClaw can give Pi custom tools (like "send a WhatsApp message") that Pi couldn't have on its own
+- OpenClaw can intercept the reply mid-stream and format it for a specific channel
+- The chunked, streaming replies from Day 2 work at all — they require direct, real-time communication
 
-### Where state lives
+If Pi were bolted on (what engineers call a "subprocess"), OpenClaw would only get the finished reply as a big block of text at the end. No streaming, no tool customisation, no live typing indicators.
 
-| Aspect          | Pi CLI                  | OpenClaw                                                                                       |
-| --------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
-| Sessions        | `~/.pi/agent/sessions/` | `~/.openclaw/agents/<agentId>/sessions/` (or `$OPENCLAW_STATE_DIR/...`)                        |
-| Config          | `AGENTS.md` + prompts   | `openclaw.json` + dynamic per-channel prompt                                                   |
-| Auth            | Single credential       | `auth-profiles.json` with rotation + cooldown                                                  |
-| Event handling  | TUI rendering           | Callbacks (`onBlockReply`, `onToolResult`, ...)                                                |
+> **In plain terms:** "subprocess" means a separate program. "stdout" is the text a separate program prints out — like reading a printout rather than watching someone work live. OpenClaw skips all of that by having Pi work directly inside it.
 
-`~/.openclaw` *shadows* `~/.pi` for everything OpenClaw touches. If you've used Pi standalone before, your `~/.pi` is untouched and still works for `pi` directly.
+## The four layers of Pi
 
-## Knobs you control
+Pi is actually made up of four layers stacked on top of each other. You don't need to know them in detail — but it's useful to know they exist:
 
-You don't write Pi code from OpenClaw config — but OpenClaw exposes a small set of keys that map straight onto Pi parameters. Knowing the mapping is the difference between guessing and steering.
+| Layer | What it does |
+|---|---|
+| **Model layer** | Talks to AI providers (Anthropic, Google, OpenAI…) |
+| **Agent core** | Runs the turn loop and tool execution |
+| **Coding agent** | The high-level interface OpenClaw actually calls |
+| **Terminal UI** | A chat interface Pi ships with (separate from OpenClaw) |
 
-**Thinking level.** OpenClaw's `--thinking low|medium|high` (and the per-message override) maps via `mapThinkingLevel()` to Pi's `thinkingLevel` argument on `createAgentSession`. If a model rejects the level, `pickFallbackThinkingLevel()` downgrades automatically.
+OpenClaw talks to the "Coding agent" layer and everything below it runs automatically.
 
-**Model selection.** `provider` and `model` flow into `resolveModel()`, which uses Pi's `ModelRegistry` and `AuthStorage`. OpenClaw's multi-profile rotation sits *above* `AuthStorage` — it picks a profile, then calls `authStorage.setRuntimeApiKey(...)` so Pi sees a single credential per attempt.
+## When something goes wrong
 
-**System prompt override.** OpenClaw assembles a prompt with sections for Tooling, Safety, Skills, Workspace, Sandbox, Messaging, Voice, Reply Tags and more, then injects it via `applySystemPromptOverrideToSession()`. You influence this through channel config, skills, sandbox mode, and the `extraSystemPrompt` knob — not by editing Pi.
+Knowing about Pi makes you much better at diagnosing problems. Almost every issue falls into one of two buckets:
 
-**Settings overrides.** `src/agents/pi-settings.ts` is the seam where OpenClaw applies its own values to Pi's `SettingsManager` before the session is built. Compaction mode (`safeguard`) and context pruning (`cache-ttl`) are wired in through Pi *extensions* registered via `resourceLoader` — set them in `cfg.agents.defaults` and they're loaded as Pi extension paths, not custom OpenClaw code paths.
+**Pi problem** — something went wrong in the thinking itself:
+- The model gave a strange or empty response
+- The Agent went in circles and didn't finish
+- Compaction (context management) behaved unexpectedly
 
-The mental rule: anything labelled "thinking", "model", "compaction", "context window", or "system prompt" in OpenClaw config ends up as a Pi argument. Anything labelled "channel", "auth profile", "sandbox", "skills" or "messaging" is an OpenClaw concept that wraps Pi.
+**OpenClaw problem** — something went wrong in the messaging layer:
+- The reply went to the wrong channel or person
+- A tool wasn't available that should have been
+- The Agent's personality or system prompt wasn't applied correctly
 
-## Power-user pattern
+The quickest way to tell the difference: if the same question works fine when you chat with your Agent directly but breaks when it comes through WhatsApp or Telegram, it's an OpenClaw problem. If it breaks everywhere, it's likely Pi.
 
-**Locate the layer before you debug.**
+## Reflect
 
-When the agent does something weird, the first triage question is: is this an OpenClaw layer issue or a Pi layer issue? They have completely different fixes.
-
-OpenClaw layer symptoms: the wrong channel got the reply; the system prompt didn't include a skill; the wrong auth profile was used; a tool call was filtered out by policy; an image wasn't injected for this turn; a `[[media:...]]` directive wasn't parsed. Fix in `src/agents/` files outside the `pi-embedded-runner/` core — `channel-tools.ts`, `system-prompt.ts`, `auth-profiles.ts`, `pi-tools.policy.ts`.
-
-Pi layer symptoms: the model refused; the streamed text included raw `<thinking>` tags; the tool schema was rejected by Gemini; compaction kicked in unexpectedly; a turn ordering error came back from Anthropic. Fix is usually a Pi version bump, a setting in `pi-settings.ts`, or a hook in `src/agents/pi-hooks/`.
-
-The fastest disambiguator: run the same prompt under `pnpm tui` (Pi-native TUI on the same session files) and under `pnpm openclaw agent`. If the bug reproduces in TUI, it's Pi. If only OpenClaw shows it, it's the chassis.
-
-## Try this
-
-1. From an OpenClaw checkout, find Pi's installed package metadata:
-
-   ```bash
-   cat node_modules/@mariozechner/pi-coding-agent/package.json | head -40
-   ```
-
-   Confirm the version matches the `0.70.2` pin in `docs/pi.md`. Look at the `exports` field — every named export listed there (`createAgentSession`, `SessionManager`, `AuthStorage`, `ModelRegistry`, `DefaultResourceLoader`, `SettingsManager`) is something OpenClaw imports.
-
-2. List the `~/.openclaw` paths that shadow `~/.pi`. Start at `~/.openclaw/agents/<agentId>/`. Compare:
-
-   - `agents/<agentId>/sessions/` ↔ `~/.pi/agent/sessions/`
-   - `agents/<agentId>/agent/auth-profiles.json` ↔ Pi's single-credential storage
-   - `openclaw.json` (top-level) ↔ `AGENTS.md`
-
-   If `OPENCLAW_STATE_DIR` is set, swap that for `~/.openclaw`. Notice what does *not* exist on the OpenClaw side: there's no equivalent of Pi's standalone CLI history, because OpenClaw sessions are keyed per channel.
-
-## Reflection
-
-1. Why does OpenClaw set `builtInTools: []` and pass everything through `customTools`? What invariant would break if it accepted Pi's defaults?
-2. If Pi released a `0.71.0` with a breaking change to `AgentTool.execute`, which OpenClaw file would break first, and why?
-3. You hit a bug where the model answers fine in `pnpm tui` but produces empty replies through Telegram. Which layer do you investigate, and which two or three files do you open first?
+1. Your Agent gives a strange response — short, confused, nothing like its usual personality. Is this more likely a Pi problem or an OpenClaw problem? Why?
+2. In your own words, why does OpenClaw build Pi in rather than run it as a separate program?
+3. You've used the typing indicator feature before — now you know *why* it works. Which part of today explains it?
 
 ---
 [← Day 2](day-02-agent-loop.md) · [Course home](../README.md) · [Glossary](../glossary.md) · [Day 4 →](day-04-harnesses.md)
